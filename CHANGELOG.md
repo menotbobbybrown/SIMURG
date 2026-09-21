@@ -3,6 +3,77 @@
 All notable changes to this project are documented in this file.
 The format is based on Keep a Changelog.
 
+## [1.0.4] - 2026-09-21
+
+SIMURG Pulse — the optional deep-learning detection tier. A small streaming
+transformer (345K params, 1.3 MB safetensors) trained on real answers from the
+guarded endpoint plus CorruptBench corruptions. Captures SEQUENTIAL structure
+(loop phase, script cadence, garbage texture) that the 15-dim statistics of
+the numpy tier compress away.
+
+### Added
+
+- **SIMURG Pulse deep tier** (src/simurg/deep/): 2-layer transformer over the
+  recent 600-char window (trigram hash tokens, 256 seq), ~345K params, ships as
+  src/simurg/weights/simurg_pulse.safetensors. Trained on 40 live answers from
+  wahoo-1.5-preview + 240 CorruptBench corruptions; onset-aware window labels
+  mirror the numpy trainer's protocol
+- **pulse detector** auto-registered in the ensemble: its calibrated
+  probability joins the same conformal fusion as the five existing detectors;
+  on a strong hit it cites "pulse deep-tier p=..." and attributes a taxonomy
+  class
+- **train_pulse.py CLI**: SIMURG_LIVE_URL/SIMURG_LIVE_MODEL env wiring, live
+  sampling, BCE training with pos_weight, held-out AUROC + calibration anchors
+  (lo/hi) stored in the safetensors metadata; trains on CPU in seconds (MPS
+  lacks SDPA-with-dropout during training; inference uses MPS when present)
+- **graceful degradation contract**: without torch / safetensors / weights the
+  detector silently contributes p=0 and the numpy-only core behaves EXACTLY as
+  before; install with pip install simurg[deep] to enable
+- benchmark parity check: with Pulse present the CorruptBench results are
+  unchanged (TPR 78/80, AUROC 0.550 on the 1-clean test split) — the deep tier
+  adds recall headroom without regressing the calibrated operating point
+
+### Changed
+
+- pyproject: optional deep extra (torch + safetensors), pulse weights added
+  to package-data
+
+### Self-Heal repair ladder — the guard that heals
+
+SIMURG Self-Heal — the guard that heals. A corrupt mid-stream abort is no
+longer followed by a blind full retry; the diagnosis drives a targeted
+continuation that stitches a clean answer in one generation's wall-clock.
+
+#### Added
+
+- **Self-Heal repair ladder** (GuardedLLM(heal=True), the new default):
+  on a corrupt attempt the guard (1) diagnoses the fired corruption class,
+  (2) trims the released prefix to its verified-clean boundary, (3) sends a
+  pathology-specific continuation request ("continue from here, never repeat"
+  / "stay in the original language") at slightly warmer sampling, (4) guards
+  the continuation with a fresh sentinel and stitches prefix + verified tail
+  into one answer with result.healed = True
+- **periodic-loop onset detector** (find_loop_onset): exact loop-start
+  localization via self-similarity + exact-mismatch run scan, so the whole
+  degenerate loop is cut before continuation and the model never sees it
+- **trim_to_clean**: verified-clean boundary extraction for aborted
+  streams (structural fast path + multi-window score probes)
+- **verify_final**: post-hoc full-text verification of stitched answers —
+  the zero-leak guarantee now covers healed output; residue is trimmed or the
+  ladder falls through to plain retries / fallback
+- heal instructions per corruption class: repetition collapse, cross-lingual
+  drift, structural breakdown, regurgitation; semantic collapse falls through
+  to a full retry (context compromised)
+- hermetic self-heal regressions (tests/test_healing.py): corrupt-then-heal
+  ladder, stitched prefix/tail integrity, prefix carried into the repair
+  request, zero-leak invariant
+
+#### Changed
+
+- GuardedLLM.chat abort handling now returns the verified released prefix of a
+  corrupt attempt so the heal ladder can stitch from it (legacy abort-only
+  behaviour preserved via heal=False)
+
 ## [1.0.3] - 2026-08-29
 
 SIMURG Search — a free, hallucination-fighting web layer for AI agents. Thanks

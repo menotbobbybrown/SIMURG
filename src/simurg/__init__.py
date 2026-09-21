@@ -35,8 +35,10 @@ from .learning.model import OnlineLogReg
 from .learning.custom import (CustomLearnedDetector, DetectabilityReport,
                               LexiconDetector, fit_custom_detector)
 from .integrations.openai_guard import GuardedLLM
+from .healing import (Healer, RepairPlan, REPAIR, RETRY,
+                      trim_to_clean, verify_final, find_loop_onset)
 
-__version__ = "1.0.1"
+__version__ = "1.0.4"
 
 __all__ = [
     "Simurg", "Verdict", "StreamFeatures", "OnlineLogReg", "ConformalEnsemble",
@@ -48,4 +50,6 @@ __all__ = [
     "RobustEWMA",
     "CLEAN", "SUSPECT", "CORRUPT",
     "REPETITION", "DRIFT", "REGURGITATION", "STRUCTURAL", "SEMANTIC", "TAXONOMY",
+    "Healer", "RepairPlan", "REPAIR", "RETRY",
+    "trim_to_clean", "verify_final", "find_loop_onset",
 ]

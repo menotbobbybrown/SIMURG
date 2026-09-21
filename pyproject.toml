@@ -10,10 +10,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "simurg"
-version = "1.0.3"
+version = "1.0.4"
 description = "Zero-leak online detection of LLM decoding corruption in production streams"
 readme = "README.md"
-license = { text = "Apache-2.0" }
+license = "Apache-2.0"
 authors = [{ name = "Farid Aghayev (doofZ)", email = "farid.a@hal-x.ai" }]
 keywords = ["llm", "llm-safety", "guardrails", "streaming", "hallucination",
             "anomaly-detection", "inference", "vllm", "openai-api", "online-learning"]
@@ -23,6 +23,7 @@ dependencies = ["numpy>=1.24"]
 [project.optional-dependencies]
 figures = ["matplotlib>=3.7"]
 test = ["pytest>=7"]
+deep = ["torch>=2.1", "safetensors>=0.4"]
 
 [project.urls]
 Homepage = "https://hal-x.ai"
@@ -34,4 +35,5 @@ where = ["src"]
 [tool.setuptools.package-data]
 simurg = ["weights/*.json", "training/train_ui/*.html", "guard_ui/*.html",
           "veritas_ui/*.html", "veritas/monolith_data/*.json",
-          "veritas/monolith_data/*.jsonl", "veritas/factpulse/*.json"]
+          "veritas/monolith_data/*.jsonl", "veritas/factpulse/*.json",
+          "weights/simurg_pulse.safetensors"]

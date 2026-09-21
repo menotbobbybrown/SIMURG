@@ -36,13 +36,15 @@ SIMURG reads 197,000.
 9. [Teach it your domain and your failure modes](#teach-it-your-domain-and-your-failure-modes)
 10. [Live guard dashboard](#live-guard-dashboard)
 11. [Free web search for your agents (TinyFish)](#free-web-search-for-your-agents-tinyfish)
-12. [SIMURG Monolith](#simurg-monolith--real-time-learning--grounded-factuality-new-in-102)
-13. [What SIMURG is NOT](#what-simurg-is-not)
-14. [Repository layout](#repository-layout)
-15. [Roadmap](#roadmap)
-16. [FAQ](#faq)
-17. [Citation](#citation)
-18. [License](#license)
+12. [SIMURG Pulse - the deep-learning tier](#simurg-pulse--the-deep-learning-tier-new-in-104)
+13. [SIMURG Self-Heal - the guard that heals](#simurg-self-heal--the-guard-that-heals-new-in-104)
+14. [SIMURG Monolith](#simurg-monolith--real-time-learning--grounded-factuality-new-in-102)
+15. [What SIMURG is NOT](#what-simurg-is-not)
+16. [Repository layout](#repository-layout)
+17. [Roadmap](#roadmap)
+18. [FAQ](#faq)
+19. [Citation](#citation)
+20. [License](#license)
 
 </details>
 
@@ -82,6 +84,18 @@ onset-localization study, and the zero-leak protocol specification:
 > **SIMURG: Zero-Leak Online Detection of LLM Decoding Corruption in
 > Production Streams**, F. Aghayev, E. Ahmadbayli, HAL-X AI, 2026.
 > [Read the paper (PDF, 13 pages)](https://github.com/doofzoff/SIMURG/blob/main/paper/simurg_paper.pdf?raw=true)
+> [Paper on SSRN](https://ssrn.com/abstract=7451269)
+
+SIMURG is a **streaming hallucination and output-degradation detector for
+LLMs**: it watches a response as tokens stream in and alarms the moment the
+output degenerates (repetition loops, cross-lingual drift, regurgitation,
+structural collapse).
+
+**You can train SIMURG on your own type of hallucinations.** If your
+workload has a characteristic failure mode — fabricated citations, number
+drift, prompt echo, domain-specific garbage — collect or synthesize examples
+of it and retrain the deep tier against your endpoint in one command (see
+the Pulse section and `python3 -m simurg.deep.train_pulse --help`).
 
 ---
 
@@ -426,6 +440,109 @@ dependencies.
 
 ---
 
+## SIMURG Self-Heal — the guard that heals (new in 1.0.4)
+
+The zero-leak guard cuts a corrupt stream **mid-flight** — but until now the
+next step was a *blind full retry*: regenerate the entire answer, pay the full
+latency again, and often corrupt AGAIN. Repetition collapse in particular is
+**near-deterministic** — same context, same degenerate attractor, same loop.
+
+**SIMURG Self-Heal** turns the abort into a diagnosis and treats it. On a
+corrupt attempt the guard now:
+
+1. **diagnoses** the fired corruption class from the sentinel's reasons
+   (repetition loop / script drift / structural garbage / regurgitation);
+2. **trims** the released prefix down to its verified-clean boundary — a
+   periodic-loop detector finds the exact loop onset and cuts the whole loop,
+   so the continuation never sees the degenerate text;
+3. **steers** a targeted continuation request: the clean prefix is sent back
+   as an assistant turn plus a pathology-specific instruction
+   ("continue from here, never repeat" / "stay in the original language"),
+   at slightly warmer sampling to break the deterministic attractor;
+4. **guards** the continuation with a fresh sentinel, **stitches** prefix +
+   verified tail into one answer, and runs a **post-hoc full-text verification**
+   over the stitched result — the zero-leak guarantee holds for healed
+   answers too; if any degenerate residue survives, it is trimmed or the
+   ladder falls through to plain retries and the fallback model.
+
+The net effect: a corrupt stream becomes a clean stitched answer in **one
+generation's wall-clock** instead of two, and a degenerate attractor that a
+blind retry would re-enter is escaped structurally.
+
+```python
+from simurg import GuardedLLM
+
+llm = GuardedLLM("http://localhost:8000/v1", model="my-model")   # heal=True by default
+result = llm.chat([{"role": "user", "content": "..."}],
+                  on_token=lambda t: print(t, end="", flush=True))
+
+result.healed     # True when the answer was stitched from a targeted repair
+result.attempts   # e.g. [primary=corrupt, heal-1=clean] instead of [primary, retry-1, ...]
+
+# opt out of healing for legacy abort-only behaviour:
+legacy = GuardedLLM("http://localhost:8000/v1", model="my-model", heal=False)
+```
+
+The heal ladder is fully inspectable: every rung is an `Attempt` with its
+state, reasons and onset, so a session replay shows exactly what was cut,
+what instruction steered the repair, and what the stitched answer looks like.
+
+---
+
+## SIMURG Pulse — the deep-learning tier (new in 1.0.4)
+
+The five-detector ensemble reads **15 statistics** per checkpoint. Statistics
+are robust and explainable, but they compress away *sequential* structure:
+the exact phase of a repetition loop, the cadence of script switches, the
+texture of structural garbage. **SIMURG Pulse** adds a sixth, learned view:
+a small streaming transformer (2 layers, 64-dim, 345K parameters, 1.3 MB
+safetensors file) that reads the recent 600 characters and outputs a
+calibrated corruption probability.
+
+**Training on YOUR model.** The bundled weights were trained on 40 real
+answers from the guarded endpoint (wahoo-1.5-preview) plus 240 CorruptBench
+corruptions, with onset-aware window labels (a checkpoint only counts as
+corrupt after the stream has actually corrupted — same protocol as the numpy
+trainer). Retrain against any endpoint in one command:
+
+    pip install "simurg[deep]"
+    SIMURG_LIVE_URL=http://your-endpoint/v1/chat/completions \
+    SIMURG_LIVE_MODEL=your-model \
+    python3 -m simurg.deep.train_pulse --clean 40 --corrupt 240 --epochs 8
+
+Training runs on CPU in seconds (the model is tiny); held-out AUROC and the
+calibration anchors are printed and stored in the weights file.
+
+**Zero-config, zero-risk.** Pulse is optional by contract: the package
+imports without torch, and when torch / safetensors / a weights file are
+missing the detector silently contributes 0 and every existing behaviour is
+unchanged. When all three are present it joins the ensemble automatically and
+participates in the same conformal fusion — a strong hit appears in alarm
+reasons as "pulse deep-tier p=0.98". Inference is ~4 ms per checkpoint on
+Apple Silicon (MPS), ~150x faster than a 50 tok/s model can write.
+
+| input | pulse prob |
+|:---|:---:|
+| clean prose | 0.000 |
+| repetition loop | 1.000 |
+| cross-lingual drift | 1.000 |
+| structural table echo | 1.000 |
+
+**Weights on Hugging Face.** The trained deep-tier artifact ships in the repo
+(`src/simurg/weights/simurg_pulse.safetensors`, ~1.3 MB) and is also published
+as a standalone model card on Hugging Face: `MergenAI/SIMURG`. Pull the
+weights from the hub directly when you want to retrain or fine-tune outside
+the package:
+
+    from huggingface_hub import hf_hub_download
+    w = hf_hub_download("MergenAI/SIMURG", "simurg_pulse.safetensors")
+
+The card documents architecture, training data, held-out AUROC (0.925) and
+calibration anchors. The full model card lives next to the weights in the
+repo at `src/simurg/weights/MODEL_CARD.md`.
+
+---
+
 ## SIMURG Monolith — real-time learning + grounded factuality (new in 1.0.2)
 
 The base guard watches the *decode*. **SIMURG Monolith** adds the layer that
@@ -548,6 +665,9 @@ src/simurg/
 │                        rolling SimHash, robust-z calibration, Page-Hinkley
 ├── detection/           rules, detectors, conformal fusion, sentinel (protocol)
 ├── learning/            online logistic model, custom-failure-mode training (BYOC)
+├── deep/                SIMURG Pulse: optional deep tier (transformer over the
+│   │                     recent char window) + train_pulse trainer + detector
+│   └── pulse.safetensors weights live in weights/ (optional, see [deep] extra)
 ├── integrations/        GuardedLLM, the OpenAI-compatible drop-in guard
 ├── data/                CorruptBench synth, dataset builder, benchmark, generator
 ├── training/            live-training run + real-time web dashboard
@@ -560,6 +680,7 @@ src/simurg/
 ├── veritas_dashboard.py Monolith terminal server (stdlib-only, SSE, feedback API)
 ├── veritas_ui/          Monolith terminal front-end (real-time learning panel)
 └── weights/             shipped model + conformal thresholds (use as a pair)
+                         + simurg_pulse.safetensors (optional deep tier)
 docs/                    TRAINING.md, CUSTOM.md
 examples/                runnable quickstart
 tests/                   sentinel + websearch regressions + dashboard e2e tests
