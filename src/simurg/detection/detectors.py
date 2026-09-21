@@ -20,6 +20,13 @@ from ..core import (DRIFT, REGURGITATION, REPETITION, SEMANTIC, STRUCTURAL,
                    REGISTRY, DetectorScore)
 from .rules import rule_verdict
 
+# Optional deep tier: registers the pulse detector. The import is guarded so
+# the numpy-only core keeps working when torch/safetensors are absent.
+try:
+    from ..deep import pulse_detector  # noqa: F401
+except Exception:
+    pass
+
 
 def _ramp(x: float, lo: float, hi: float) -> float:
     return 0.0 if x <= lo else 1.0 if x >= hi else (x - lo) / (hi - lo)
